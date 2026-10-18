@@ -41,6 +41,7 @@ function IndexerSelectInput({
       value={value}
       isFetching={isFetching}
       values={values}
+      selectedValueOptions={{ placeholder: `(${translate('Any')})` }}
       onChange={onChange}
     />
   );

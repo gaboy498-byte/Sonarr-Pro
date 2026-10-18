@@ -11,6 +11,7 @@ interface HintedSelectInputSelectedValueProps<T, V> {
   hint?: ReactNode;
   isMultiSelect?: boolean;
   includeHint?: boolean;
+  placeholder?: string;
 }
 
 function HintedSelectInputSelectedValue<
@@ -23,6 +24,7 @@ function HintedSelectInputSelectedValue<
     hint,
     isMultiSelect = false,
     includeHint = true,
+    placeholder,
     ...otherProps
   } = props;
 
@@ -36,6 +38,11 @@ function HintedSelectInputSelectedValue<
       {...otherProps}
     >
       <div className={styles.valueText}>
+        {isMultiSelect &&
+        Array.isArray(selectedValue) &&
+        selectedValue.length === 0
+          ? placeholder
+          : null}
         {isMultiSelect && Array.isArray(selectedValue)
           ? selectedValue.map((key) => {
               const v = valuesMap.get(key);
