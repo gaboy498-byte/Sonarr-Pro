@@ -110,6 +110,19 @@ The [September source baseline](https://github.com/gaboy498-byte/Sonarr-Pro/tree
 
 The October integration adds the ImageSharp security upgrade and Windows restore correction, followed by this documentation update. Current upstream synchronization and deployment are separate milestones; this source promotion performs neither.
 
+## Custom interface improvements
+
+### Release Profile Indexer Selection
+
+This fork's Indexer dropdown displays **`(Any)`** when no indexers are selected. The Release Profile then applies to all indexers, subject to its other settings, and automatically includes newly added indexers. Selecting individual indexers retains the existing multi-select behavior; clearing the final selection restores `(Any)`. Existing empty selections display the label without editing or resaving the profile.
+
+This is a frontend usability improvement extending inherited Sonarr / Sonarr-Pro functionality. `(Any)` is a display label, not a selectable indexer record or ID. Backend filtering rules, API payloads (`indexerIds: []` for an empty selection), and release-selection behavior are unchanged.
+
+### October 18, 2026 changelog
+
+- Added the Release Profile Indexer `(Any)` empty-selection display while preserving multi-select behavior.
+- Validation: seven focused frontend checks passed, frontend and stylesheet lint passed, and the production frontend build passed. These component/handler checks do not validate browser end-to-end behavior or Linux/Docker runtime deployment. The earlier validation results and known limitations above still apply.
+
 ## What's removed
 
 Sonarr Pro doesn't contact Sonarr's servers for updates, crash reports, or announcements. Those endpoints describe upstream Sonarr builds, so an update offered there would replace this program with a different one — and the Sonarr team shouldn't receive crash reports or install metrics for a fork they don't maintain. Updates happen through Docker instead.
