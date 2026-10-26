@@ -10,3 +10,6 @@ distribution/osx/Sonarr text eol=lf
 # Custom for Visual Studio
 *.cs     diff=csharp
 *.sln    merge=union
+
+# Preserve the vendor-issued public license bytes and omit its value from diffs.
+licenses/SixLabors/sixlabors.lic -text -diff
