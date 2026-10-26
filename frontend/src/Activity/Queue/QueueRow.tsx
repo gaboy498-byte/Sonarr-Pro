@@ -114,7 +114,8 @@ function QueueRow(props: QueueRowProps) {
   const episodes = useEpisodesWithIds(episodeIds);
   const { showRelativeDates, shortDateFormat, longDateFormat, timeFormat } =
     useUiSettingsValues();
-  const { removeQueueItem, isRemoving } = useRemoveQueueItem(id);
+  const { removeQueueItem, isRemoving, removeError, resetRemoveError } =
+    useRemoveQueueItem(id);
   const { grabQueueItem, isGrabbing, grabError } = useGrabQueueItem(id);
   const { toggleSelected, useIsSelected } = useSelect<Queue>();
   const isSelected = useIsSelected(id);
@@ -146,24 +147,39 @@ function QueueRow(props: QueueRowProps) {
   }, [setIsInteractiveImportModalOpen, onQueueRowModalOpenOrClose]);
 
   const handleRemoveQueueItemPress = useCallback(() => {
+    resetRemoveError();
     onQueueRowModalOpenOrClose(true);
     setIsRemoveQueueItemModalOpen(true);
-  }, [setIsRemoveQueueItemModalOpen, onQueueRowModalOpenOrClose]);
+  }, [
+    setIsRemoveQueueItemModalOpen,
+    onQueueRowModalOpenOrClose,
+    resetRemoveError,
+  ]);
 
   const handleRemoveQueueItemModalConfirmed = useCallback(() => {
-    onQueueRowModalOpenOrClose(false);
-    removeQueueItem();
-    setIsRemoveQueueItemModalOpen(false);
+    if (isRemoving) {
+      return;
+    }
+
+    removeQueueItem(() => {
+      onQueueRowModalOpenOrClose(false);
+      setIsRemoveQueueItemModalOpen(false);
+    });
   }, [
     setIsRemoveQueueItemModalOpen,
     removeQueueItem,
+    isRemoving,
     onQueueRowModalOpenOrClose,
   ]);
 
   const handleRemoveQueueItemModalClose = useCallback(() => {
+    if (isRemoving) {
+      return;
+    }
+
     onQueueRowModalOpenOrClose(false);
     setIsRemoveQueueItemModalOpen(false);
-  }, [setIsRemoveQueueItemModalOpen, onQueueRowModalOpenOrClose]);
+  }, [setIsRemoveQueueItemModalOpen, onQueueRowModalOpenOrClose, isRemoving]);
 
   const handleSelectedChange = useCallback(
     ({ id, value, shiftKey = false }: SelectStateInputProps) => {
@@ -459,6 +475,8 @@ function QueueRow(props: QueueRowProps) {
         <RemoveQueueItemModal
           isOpen={isRemoveQueueItemModalOpen}
           sourceTitle={title}
+          isRemoving={isRemoving}
+          removeError={removeError}
           canChangeCategory={!!downloadClientHasPostImportCategory}
           canIgnore={!!series}
           isPending={isPending}

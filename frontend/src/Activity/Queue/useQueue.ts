@@ -1,5 +1,5 @@
 import { keepPreviousData, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Filter, FilterBuilderProp } from 'Filters/Filter';
 import { useCustomFiltersList } from 'Filters/useCustomFilters';
 import useApiMutation from 'Helpers/Hooks/useApiMutation';
@@ -113,51 +113,77 @@ export const useFilters = () => {
 const useRemovalOptions = () => {
   const { removalOptions } = useQueueOptions();
 
+  const { removalMethod, blocklistMethod } = removalOptions;
+  const isValid =
+    ['removeFromClient', 'changeCategory', 'ignore'].includes(removalMethod) &&
+    ['doNotBlocklist', 'blocklistAndSearch', 'blocklistOnly'].includes(
+      blocklistMethod
+    );
+
   return {
-    remove: removalOptions.removalMethod === 'removeFromClient',
-    changeCategory: removalOptions.removalMethod === 'changeCategory',
-    blocklist: removalOptions.blocklistMethod !== 'doNotBlocklist',
-    skipRedownload: removalOptions.blocklistMethod === 'blocklistOnly',
+    isValid,
+    queryParams: {
+      removeFromClient: removalMethod === 'removeFromClient',
+      changeCategory: removalMethod === 'changeCategory',
+      blocklist:
+        blocklistMethod === 'blocklistAndSearch' ||
+        blocklistMethod === 'blocklistOnly',
+      skipRedownload: blocklistMethod === 'blocklistOnly',
+    },
+  };
+};
+
+const useQueueRemoval = <TData>(path: string) => {
+  const queryClient = useQueryClient();
+  const { isValid, queryParams } = useRemovalOptions();
+  const inFlight = useRef(false);
+  const { mutate, isPending, error, reset } = useApiMutation<unknown, TData>({
+    path: `${path}${getQueryString(queryParams)}`,
+    method: 'DELETE',
+    mutationOptions: {
+      onSettled: async () => {
+        try {
+          // A failed bulk request may already have removed some entries.
+          await queryClient.invalidateQueries({ queryKey: ['/queue'] });
+        } finally {
+          inFlight.current = false;
+        }
+      },
+    },
+  });
+
+  const remove = (data: TData, onSuccess?: () => void) => {
+    if (inFlight.current || !isValid) {
+      return;
+    }
+
+    inFlight.current = true;
+    mutate(data, { onSuccess });
+  };
+
+  return {
+    remove,
+    isRemoving: isPending,
+    removeError: error,
+    resetRemoveError: reset,
   };
 };
 
 export const useRemoveQueueItem = (id: number) => {
-  const queryClient = useQueryClient();
-  const removalOptions = useRemovalOptions();
-
-  const { mutate, isPending } = useApiMutation<unknown, void>({
-    path: `/queue/${id}${getQueryString(removalOptions)}`,
-    method: 'DELETE',
-    mutationOptions: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['/queue'] });
-      },
-    },
-  });
+  const { remove, ...state } = useQueueRemoval<void>(`/queue/${id}`);
 
   return {
-    removeQueueItem: mutate,
-    isRemoving: isPending,
+    ...state,
+    removeQueueItem: (onSuccess?: () => void) => remove(undefined, onSuccess),
   };
 };
 
 export const useRemoveQueueItems = () => {
-  const queryClient = useQueryClient();
-  const removalOptions = useRemovalOptions();
-
-  const { mutate, isPending } = useApiMutation<unknown, BulkQueueData>({
-    path: `/queue/bulk${getQueryString(removalOptions)}`,
-    method: 'DELETE',
-    mutationOptions: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['/queue'] });
-      },
-    },
-  });
+  const { remove, ...state } = useQueueRemoval<BulkQueueData>('/queue/bulk');
 
   return {
-    removeQueueItems: mutate,
-    isRemoving: isPending,
+    ...state,
+    removeQueueItems: remove,
   };
 };
 

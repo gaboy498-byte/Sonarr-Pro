@@ -72,7 +72,8 @@ function QueueContent() {
 
   const filters = useFilters();
 
-  const { isRemoving, removeQueueItems } = useRemoveQueueItems();
+  const { isRemoving, removeQueueItems, removeError, resetRemoveError } =
+    useRemoveQueueItems();
   const { isGrabbing, grabQueueItems } = useGrabQueueItems();
 
   const { count } = useQueueStatus();
@@ -93,7 +94,7 @@ function QueueContent() {
     CommandNames.RefreshMonitoredDownloads
   );
 
-  const shouldBlockRefresh = useRef(false);
+  const [shouldBlockRefresh, setShouldBlockRefresh] = useState(false);
   const currentQueue = useRef<ReactElement | null>(null);
 
   const { allSelected, allUnselected, selectAll, unselectAll, useSelectedIds } =
@@ -143,7 +144,7 @@ function QueueContent() {
   }, [executeCommand]);
 
   const handleQueueRowModalOpenOrClose = useCallback((isOpen: boolean) => {
-    shouldBlockRefresh.current = isOpen;
+    setShouldBlockRefresh(isOpen);
   }, []);
 
   const handleGrabSelectedPress = useCallback(() => {
@@ -151,23 +152,33 @@ function QueueContent() {
   }, [selectedIds, grabQueueItems]);
 
   const handleRemoveSelectedPress = useCallback(() => {
-    shouldBlockRefresh.current = true;
+    resetRemoveError();
+    setShouldBlockRefresh(true);
     setIsConfirmRemoveModalOpen(true);
-  }, [setIsConfirmRemoveModalOpen]);
+  }, [setIsConfirmRemoveModalOpen, resetRemoveError]);
 
   const handleRemoveSelectedConfirmed = useCallback(() => {
-    shouldBlockRefresh.current = false;
-    removeQueueItems({ ids: selectedIds });
-    setIsConfirmRemoveModalOpen(false);
-  }, [selectedIds, removeQueueItems]);
+    if (isRemoving || !selectedIds.length) {
+      return;
+    }
+
+    removeQueueItems({ ids: selectedIds }, () => {
+      setShouldBlockRefresh(false);
+      setIsConfirmRemoveModalOpen(false);
+    });
+  }, [selectedIds, removeQueueItems, isRemoving]);
 
   const handleConfirmRemoveModalClose = useCallback(() => {
-    shouldBlockRefresh.current = false;
+    if (isRemoving) {
+      return;
+    }
+
+    setShouldBlockRefresh(false);
     setIsConfirmRemoveModalOpen(false);
-  }, []);
+  }, [isRemoving]);
 
   const handleImportSelectedPress = useCallback(() => {
-    shouldBlockRefresh.current = true;
+    setShouldBlockRefresh(true);
     setIsInteractiveImportDownloadIds(
       selectedIds
         .map((id) => {
@@ -180,7 +191,7 @@ function QueueContent() {
   }, [records, selectedIds]);
 
   const handleImportSelectedModalClose = useCallback(() => {
-    shouldBlockRefresh.current = false;
+    setShouldBlockRefresh(false);
     setIsInteractiveImportDownloadIds([]);
   }, []);
 
@@ -224,7 +235,7 @@ function QueueContent() {
     };
   }, [refetch]);
 
-  if (!shouldBlockRefresh.current) {
+  if (!shouldBlockRefresh) {
     currentQueue.current = (
       <PageContentBody>
         {isRefreshing && !isAllPopulated ? <LoadingIndicator /> : null}
@@ -352,6 +363,8 @@ function QueueContent() {
       <RemoveQueueItemModal
         isOpen={isConfirmRemoveModalOpen}
         selectedCount={selectedCount}
+        isRemoving={isRemoving}
+        removeError={removeError}
         canChangeCategory={
           isConfirmRemoveModalOpen &&
           selectedIds.every((id: number) => {

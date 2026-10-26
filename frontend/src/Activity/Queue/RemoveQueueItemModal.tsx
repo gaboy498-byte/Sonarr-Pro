@@ -1,9 +1,11 @@
 import React, { useCallback, useMemo } from 'react';
+import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
 import { EnhancedSelectInputValue } from 'Components/Form/Select/EnhancedSelectInput';
 import Button from 'Components/Link/Button';
+import SpinnerButton from 'Components/Link/SpinnerButton';
 import Modal from 'Components/Modal/Modal';
 import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
@@ -25,6 +27,8 @@ interface RemoveQueueItemModalProps {
   canChangeCategory: boolean;
   canIgnore: boolean;
   isPending: boolean;
+  isRemoving: boolean;
+  removeError?: unknown;
   selectedCount?: number;
   downloadClient?: string;
   onRemovePress(): void;
@@ -38,6 +42,8 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
     canIgnore,
     canChangeCategory,
     isPending,
+    isRemoving,
+    removeError,
     selectedCount,
     downloadClient,
     onRemovePress,
@@ -140,13 +146,28 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
     [removalMethod, blocklistMethod]
   );
 
+  const canSubmit =
+    !isRemoving &&
+    selectedCount !== 0 &&
+    removalMethodOptions.some(
+      (option) =>
+        option.key === removalMethod && (isPending || !option.isDisabled)
+    ) &&
+    blocklistMethodOptions.some(
+      (option) => option.key === blocklistMethod && !option.isDisabled
+    );
+
   const handleConfirmRemove = useCallback(() => {
-    onRemovePress();
-  }, [onRemovePress]);
+    if (canSubmit) {
+      onRemovePress();
+    }
+  }, [canSubmit, onRemovePress]);
 
   const handleModalClose = useCallback(() => {
-    onModalClose();
-  }, [onModalClose]);
+    if (!isRemoving) {
+      onModalClose();
+    }
+  }, [isRemoving, onModalClose]);
 
   return (
     <Modal isOpen={isOpen} size={sizes.MEDIUM} onModalClose={handleModalClose}>
@@ -155,6 +176,10 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
 
         <ModalBody>
           <div className={styles.message}>{message}</div>
+
+          {removeError ? (
+            <Alert kind={kinds.DANGER}>{translate('QueueRemoveError')}</Alert>
+          ) : null}
 
           {isPending ? null : (
             <FormGroup>
@@ -165,7 +190,7 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
                 name="removalMethod"
                 value={removalMethod}
                 values={removalMethodOptions}
-                isDisabled={!canChangeCategory && !canIgnore}
+                isDisabled={isRemoving}
                 helpText={
                   !canChangeCategory && !canIgnore
                     ? translate(
@@ -197,6 +222,7 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
             <FormInputGroup
               type={inputTypes.SELECT}
               name="blocklistMethod"
+              isDisabled={isRemoving}
               value={blocklistMethod}
               values={blocklistMethodOptions}
               helpText={translate('BlocklistReleaseHelpText')}
@@ -207,11 +233,18 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
         </ModalBody>
 
         <ModalFooter>
-          <Button onPress={handleModalClose}>{translate('Close')}</Button>
-
-          <Button kind={kinds.DANGER} onPress={handleConfirmRemove}>
-            {translate('Remove')}
+          <Button isDisabled={isRemoving} onPress={handleModalClose}>
+            {translate('Close')}
           </Button>
+
+          <SpinnerButton
+            kind={kinds.DANGER}
+            isSpinning={isRemoving}
+            isDisabled={!canSubmit}
+            onPress={handleConfirmRemove}
+          >
+            {translate('Remove')}
+          </SpinnerButton>
         </ModalFooter>
       </ModalContent>
     </Modal>
