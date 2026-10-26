@@ -24,6 +24,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare verified hardened MonoTorrent
+        run: bash .github/scripts/prepare-monotorrent.sh
+
+      - name: Prepare tracked Docker build context
+        id: build_context
+        run: python3 .github/scripts/prepare-docker-context.py
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -73,7 +82,8 @@ jobs:
       - name: Build for smoke test
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ steps.build_context.outputs.context }}
+          file: ${{ steps.build_context.outputs.context }}/Dockerfile
           platforms: linux/amd64
           push: false
           load: true
@@ -110,7 +120,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ steps.build_context.outputs.context }}
+          file: ${{ steps.build_context.outputs.context }}/Dockerfile
           platforms: ${{ steps.platforms.outputs.list }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

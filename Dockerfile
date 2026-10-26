@@ -34,7 +34,10 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS backend
 ARG TARGETARCH
 WORKDIR /src
 
-COPY . .
+# Copy only backend source inputs; the verified NuGet feed is mounted below.
+COPY global.json .editorconfig ./
+COPY src/ ./src/
+COPY Logo/ ./Logo/
 
 # Map Docker's architecture names onto the .NET runtime identifiers, then build the
 # way the upstream CI does. SelfContained keeps the runtime with the app so the final
@@ -44,20 +47,33 @@ COPY . .
 # solution only declares "Any CPU", "Posix" and "Windows", so passing an architecture
 # here fails with MSB4126 before anything compiles. The architecture is carried by
 # RuntimeIdentifiers instead.
-RUN set -eux; \
+RUN --mount=type=bind,source=.ci-dependencies,target=/run/sonarr-dependencies,readonly \
+    --mount=type=bind,source=licenses/SixLabors,target=/src/licenses/SixLabors,readonly \
+    set -eux; \
+    echo '039eda4b39cb2d17c3e187ada0f5c4cd12852ec51c8ea968904024217aa2fcfa  /run/sonarr-dependencies/MonoTorrent.3.0.2-sonarrsecurity.1.rev0002.nupkg' | sha256sum --check --status; \
     case "${TARGETARCH}" in \
       amd64) RID=linux-x64   ;; \
       arm64) RID=linux-arm64 ;; \
       *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    dotnet msbuild -restore src/Sonarr.sln \
+    dotnet restore src/Sonarr.sln \
+      --configfile /run/sonarr-dependencies/NuGet.Config --force --no-http-cache \
+      -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low \
+      -p:SelfContained=true -p:Configuration=Release -p:Platform=Posix \
+      -p:RuntimeIdentifiers="${RID}" -p:RestorePackagesPath=/tmp/sonarr-ci-packages; \
+    dotnet msbuild src/NzbDrone.Core/Sonarr.Core.csproj \
+      -t:SixLabors_ValidateLicense -p:Configuration=Release -p:TargetFramework=net10.0 \
+      -p:RestorePackagesPath=/tmp/sonarr-ci-packages; \
+    dotnet msbuild src/Sonarr.sln \
       -p:SelfContained=true \
       -p:Configuration=Release \
       -p:Platform=Posix \
       -p:RuntimeIdentifiers="${RID}" \
+      -p:RestorePackagesPath=/tmp/sonarr-ci-packages \
       -t:PublishAllRids; \
     mkdir -p /app; \
-    cp -r "_output/net10.0/${RID}/publish/." /app/
+    cp -r "_output/net10.0/${RID}/publish/." /app/; \
+    cp /run/sonarr-dependencies/MonoTorrent.LICENSE /app/MonoTorrent.LICENSE
 
 # The UI is built separately and is not produced by the .NET build.
 COPY --from=ui /src/_output/UI /app/UI
