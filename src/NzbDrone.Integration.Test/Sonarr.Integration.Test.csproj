@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.10" />
+    <!-- Patch the client's transitive dependency without upgrading the full client graph. -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="10.0.13" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\NzbDrone.Test.Common\Sonarr.Test.Common.csproj" />
