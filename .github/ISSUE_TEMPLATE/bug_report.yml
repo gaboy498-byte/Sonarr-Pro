@@ -42,14 +42,16 @@ body:
   attributes:
     label: Logs
     description: >-
-      Relevant lines from System → Logs. If you can reproduce it on demand, set the log
+      Sanitized lines from System → Logs: remove API keys, credential-bearing URLs,
+      personal paths and private configuration. Follow SECURITY.md for vulnerabilities.
+      If you can reproduce it on demand, set the log
       level to Debug or Trace under Settings → General first.
     render: shell
 
 - type: input
   attributes:
     label: Version
-    description: Found under System → Status, or the image tag you pulled.
-    placeholder: e.g. v1.0.0, or ghcr.io/kakarottocake/sonarr-pro:latest
+    description: Include the release/source commit, platform and System → Status version.
+    placeholder: e.g. v2026.10, source 80a719a16, Linux/amd64
   validations:
     required: true
