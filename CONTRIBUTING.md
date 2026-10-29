@@ -1,4 +1,4 @@
-# Contributing to Sonarr Pro
+# Contributing to Matt's Sonarr-Pro fork
 
 Contributions are welcome, including AI-assisted ones. There's no CLA and no
 template to fill in.
@@ -21,12 +21,30 @@ agent working in this repository.
 
 ## Before opening a PR
 
+Follow [docs/BUILDING.md](docs/BUILDING.md) first: the backend requires the
+verified hardened MonoTorrent feed and the approved Six Labors build license.
+A plain restore against NuGet.org cannot obtain the custom package.
+
 ```bash
-dotnet build src/Sonarr.sln -c Debug
+dotnet build src/Sonarr.sln -c Debug --no-restore
 yarn lint
+yarn stylelint
+yarn build --env production
 ```
 
-CI runs both, plus the Core test suite and a Docker image build.
+These commands assume a matching Debug restore and frontend installation from
+the build guide. CI runs an audited restore, official license validation,
+backend build/Core tests, frontend lint/stylelint/production build, and a
+non-publishing Linux/amd64 Docker build on pull requests. That PR image build
+does not run a container smoke test. The separate publishing workflow remains
+manual-only. Do not describe a skipped job as a passed test.
+
+For documentation-only changes, validate relative links, instructions and
+attribution. Do not claim application tests were rerun if they were not. If a
+task explicitly prohibits image builds, agree how to handle the PR image job
+before opening the PR; a draft PR still triggers it. GitHub's commit-level
+`[skip ci]` option skips the entire push/PR workflow, not just Docker, and must
+be disclosed. Do not disable workflow or security checks to hide failures.
 
 Build the **solution**, not individual project files — `Directory.Build.props`
 loads `stylecop.json` through `$(SolutionDir)`, which is only defined for a
@@ -39,14 +57,17 @@ console.
 
 ## Bug reports and suggestions
 
-[Open an issue](https://github.com/KakarottoCake/Sonarr-Pro/issues). Suggestions
+[Open an issue](https://github.com/gaboy498-byte/Sonarr-Pro/issues). Suggestions
 are as welcome as bug reports.
 
 Please don't raise Sonarr Pro problems on Sonarr's issue tracker, forums, or
 Discord — they can't help with code they didn't write, and it costs their
 volunteers time.
 
-For bugs, the useful things to include are what you expected, what happened, and
-the relevant lines from System → Logs. If it involves a specific series or
+For bugs, include the source commit, platform, what you expected, what happened,
+and relevant **sanitized** lines from System → Logs. Remove API keys,
+credential-bearing URLs and personal paths; never attach configuration databases
+or complete backups. Follow [SECURITY.md](SECURITY.md) for vulnerabilities.
+If it involves a specific series or
 release, naming it helps more than anything else; most of the interesting bugs in
 this fork have been specific to one title's metadata.

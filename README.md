@@ -1,243 +1,74 @@
-# Sonarr Pro
+# Sonarr-Pro — Matt's fork
 
-A fork of [Sonarr](https://github.com/Sonarr/Sonarr) that adds the metadata and downloading features long-running and anime libraries need, and ships as a single Docker image.
+An independent, self-hosted television library manager built on [Sonarr](https://github.com/Sonarr/Sonarr) and [upstream Sonarr-Pro](https://github.com/KakarottoCake/Sonarr-Pro). This fork extends their metadata and download-management features with security hardening, queue reliability corrections, and multi-season import improvements.
 
-> **Unofficial.** Sonarr Pro is not affiliated with, endorsed by, or supported by the Sonarr project. Please don't raise Sonarr Pro problems on Sonarr's issue tracker, forums, or Discord — they can't help with code they didn't write. Report them [here](https://github.com/KakarottoCake/Sonarr-Pro/issues) instead.
+**This is not official Sonarr.** It is not affiliated with or supported by the Sonarr project. Report this fork's issues [in this repository](https://github.com/gaboy498-byte/Sonarr-Pro/issues), rather than asking upstream volunteers to support custom code.
 
-This repository is [Matt's source fork](https://github.com/gaboy498-byte/Sonarr-Pro) of [upstream Sonarr-Pro](https://github.com/KakarottoCake/Sonarr-Pro), which builds on official Sonarr. The September enhancements and Windows validation described below extend those projects' work. The original background and feature descriptions are retained here; their first-person authorship and maintenance statements describe upstream Sonarr-Pro.
+**Current release: [v2026.10](https://github.com/gaboy498-byte/Sonarr-Pro/releases/tag/v2026.10)** · [Installation](docs/INSTALLATION.md) · [Building](docs/BUILDING.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-**Source baseline:** `sonarr-pro-matt-2026.09` records September development validated on Windows on October 13, 2026. It is an annotated source tag, not a binary release or a certification of Linux/Docker deployment. The upstream container commands below do not install this fork's custom September changes.
+The release is **source-only**: there are no attached application binaries or verified public GHCR images for this fork. The upstream image is a different distribution and does not install these custom changes. See [Docker publishing readiness](docs/DOCKER-PUBLISHING.md) before considering a registry publication.
 
-## Built with AI, and not quiet about it
+## What's in v2026.10
 
-This fork was written with **Claude Opus 5**. Not "AI-assisted" as a hedge — written with it, most of it, and I'd rather say so up front than have you find out from the commit trailers.
+| Area | Improvements in this custom fork |
+| --- | --- |
+| Release security | Hardened fake-release submission routes and suspicious executable/script title checks; magnet metadata inspection and HTTP redirect-to-magnet protection. |
+| Queue reliability | Refresh pending-release state after removal, guard overlapping selections, honor download-client removal options, and preserve useful errors and retry selections. |
+| Multi-season handling | Explicit season-range parsing, episode mapping, safer automatic imports, legacy grab-membership reconciliation, and size-decision regression coverage. |
+| Import visibility | Per-episode import progress reporting. |
+| Release Profile interface | Show **`(Any)`** when the Indexer selection is empty, retaining search, checkboxes and multi-select behavior. |
+| Dependencies | ImageSharp **4.1.3**, hardened MonoTorrent **3.0.2-sonarrsecurity.1.rev0002**, and .NET runtime/security dependency corrections validated at **10.0.13**. |
 
-I'm pro-AI and this account is pro-AI. Not AI *art* — artists get to keep that one. But AI as a tool for building things? Absolutely. (AI video gets a pass strictly when it's funny stupid shit.)
+`(Any)` is only a display label. The API still stores `indexerIds: []`, meaning all indexers, including newly added ones, subject to the profile's other settings. Existing empty profiles need no edit or resave.
 
-**This is also why it isn't a pull request.** Sonarr's maintainers have their own position on AI-assisted contributions, and I'd guess they wouldn't want most of what's in here regardless of who or what wrote it. That's entirely their call — it's their project, their review time, and their support burden when something breaks at 3am. Forking is the polite option: nobody upstream has to review this, maintain it, or answer for it.
+## Feature origins
 
-None of which is a complaint about them. Sonarr is excellent, this is built entirely on their work, and the only reason a fork like this is even possible is that they made it GPL and wrote it well.
+**Official Sonarr** provides the core library management, monitoring, quality selection, download-client integration and Release Profiles. Must Contain / Must Not Contain restrictions are inherited. Reject Unaired Releases, Air Date Grace Period and season-pack air-date controls are inherited from official Sonarr **v5 development**; this does not imply availability in every older Sonarr release.
 
-**I'll do my best to merge upstream in at least once a month**, so this doesn't rot into an unmergeable mess. Where a bug turns out to be upstream's rather than mine, the plan is to report it there rather than patch around it here — that keeps the diff small and the merges cheap.
+**Upstream Sonarr-Pro** adds metadata sources including TMDB, AniList and MyAnimeList/Jikan, selectable episode orderings, absolute-number matching, initial multi-season support, optional unmonitored pack trimming, anime-aware matching and initial torrent-content filtering. These are not original work of this custom fork. [FORK.md](FORK.md) preserves upstream's design notes; its first-person statements and original defaults describe that inherited work, not a maintenance promise from this fork.
 
----
+**This fork** extends that foundation with the changes in the table above. September history is preserved in the [September source baseline](https://github.com/gaboy498-byte/Sonarr-Pro/tree/sonarr-pro-matt-2026.09); the October release adds dependency provisioning, licensing integration, security dependency corrections and queue fixes. Upstream synchronization is a separate, reviewed activity, not an automatic update policy.
 
-## Why this exists
+## Security scope
 
-Sonarr resolves every series through TheTVDB. That works well for weekly Western television and poorly for everything else — a 1,100-episode anime becomes twenty-odd invented seasons, a recut that TheTVDB folds into its parent can't be added at all, and an `S01-S05` pack is rejected outright.
+Release Profile title restrictions and torrent-content inspection serve different purposes. A Must Not Contain restriction such as `.exe` checks the **release title**, not every downloaded file's contents. Torrent inspection depends on available metadata and applicable settings. Direct/fallback magnet compatibility exceptions remain; strict redirect inspection does not mean every magnet is rejected when metadata is unavailable.
 
-Sonarr Pro keeps everything upstream does and adds a way around each of those.
+Explicit interactive grabs may proceed despite Release Profile rejection decisions. Applicable torrent-submission security checks still operate on those routes. These protections are not complete malware protection and do not establish that a download is safe. Usenet client support is inherited; torrent-content inspection does not inspect NZB payloads, and custom pack behavior has primarily been tested with torrents.
 
-## What's added
+The hardened MonoTorrent package is pinned to an exact archive and SHA-256. Its complete patched source/build recipe has not been recovered, so **verified provisioning is not source reproducibility**. See the [dependency provenance](https://github.com/gaboy498-byte/Sonarr-Pro-Dependencies/blob/53a58c56d3bf847b97f4b577d9b575c642369188/PROVENANCE.md). Do not substitute standard MonoTorrent.
 
-**Four metadata sources, picked per series** — TheTVDB, TMDB, AniList, and MyAnimeList (via Jikan), chosen from a dropdown above the search box when adding a series. Only TMDB needs a key; the rest need no account.
+ImageSharp's approved, assembly-scoped Community build license is included for **`Sonarr.Core`**, with exact capitalization. It is a build input, not a private deployment secret. Its scope and renewal requirements are documented in [licenses/SixLabors](licenses/SixLabors/README.md); other dependencies retain their own licensing terms.
 
-**Selectable episode orderings** — TMDB publishes alternate numbering schemes per series, and IMDb's dumps carry another. Where a series has more than one, you pick at add time. The one that motivates this is TMDB's *Absolute* order: One Piece becomes season 1, episodes 1–1181, instead of twenty-odd seasons. DVD order, story arcs and streaming orders come along for free.
+## Installation and compatibility
 
-**Series TheTVDB won't list separately** — recuts and spin-offs that TheTVDB folds into a parent series can be added from TMDB or AniList. Upstream can't add these at all.
+Start with [installation guidance](docs/INSTALLATION.md) and the [source-build instructions](docs/BUILDING.md). Building a local Docker image requires the verified dependency/context preparation; a bare `docker build .` is not the supported path for this fork.
 
-**Absolute numbering that still matches season releases** — a series on ordinary season ordering accepts absolute-numbered releases too. `Tensei Shitara Slime Datta Ken - 88` resolves to S04E16.
+- Backend: .NET 10; `global.json` requests SDK **10.0.402**. The validated Linux build selected **10.0.403** under the existing patch roll-forward policy. Runtime and SDK versions are separate.
+- Frontend build: Node.js **20**, Yarn Classic and the committed lockfile, matching the current CI/Docker configuration. This records the validated toolchain, not a promise about its ongoing vendor support.
+- Containers: Linux/amd64 has recorded build, isolated-runtime and deployment validation. The workflow declares arm64 release builds, but equivalent runtime validation is not established here.
+- New container defaults: application port **8989**, persistent `/config`, and `PUID`/`PGID` **1000**. Existing configuration may override the listening port. Mount downloads and media with consistent paths and appropriate permissions.
 
-**Multi-season packs** — `Series.S01-S05` is accepted and mapped to every season it contains, rather than refused. On by default.
+The root [docker-compose.yml](docker-compose.yml) still references **upstream's** image. It is retained as inherited configuration, not a quick start for this custom release. No published `latest`, `edge` or `v2026.10` image is promised for this fork.
 
-**Fake release filtering** — the `.torrent` file is inspected before it reaches your download client, rejecting `Episode.mkv.exe`, bare executables and installers, and password-protected archives containing no video. Split RAR sets pass, because those are normal and legitimate. On by default, and every rejection is logged with a specific reason.
+## Recorded validation and limitations
 
-**Season pack trimming** — skip episodes you deliberately left unmonitored instead of importing the whole pack. Off by default.
+Release source: [`80a719a169ba2251d8a5d7a27106ce1dc2274ae7`](https://github.com/gaboy498-byte/Sonarr-Pro/commit/80a719a169ba2251d8a5d7a27106ce1dc2274ae7).
 
-**Anime-aware search matching** — `2nd Season`, `S2`, `Part 2` and `II` all read as "season 2"; accents and articles are stripped; scoring uses Jaro-Winkler rather than upstream's single-character tolerance. Release-to-series matching also compares against every title a provider knows, so a release using a series' English title still matches when it's stored under the romaji one.
+| Check | Recorded result for the release |
+| --- | --- |
+| [GitHub CI](https://github.com/gaboy498-byte/Sonarr-Pro/actions/runs/40403507415) | Core: **5,425 passed, 0 failed, 28 skipped**; frontend lint and production build passed. |
+| Focused Windows Release regressions | **187 passed**; Windows Release solution build passed. |
+| Frontend tests | **48 passed**. |
+| Docker validation | Local Linux/amd64 build, isolated startup, runtime/dependency checks and rendered-browser checks passed; controlled deployment completed October 27, 2026. |
 
-**AniList custom lists** — import lists can target one of your own custom lists instead of only Planning and Watching. ([Sonarr#6772](https://github.com/Sonarr/Sonarr/issues/6772))
+These are recorded results, not a new test run for every README revision. Queue success/failure cases used isolated fixtures; **real production torrent deletion was not tested**. Broader ImageSharp format, concurrency and resource-stress coverage is incomplete. Past NuGet audit results do not guarantee the absence of later advisories or cover npm/OS packages. This documentation update does not claim a new vulnerability audit.
 
-Full detail, including the reasoning and the trade-offs behind each, is in [FORK.md](FORK.md).
+Support is best-effort, with no guaranteed response time or monthly upstream-merge schedule. Include the source commit, platform and sanitized reproduction details in [bug reports](https://github.com/gaboy498-byte/Sonarr-Pro/issues). Do not attach configuration databases, license material, API keys or credential-bearing URLs. See [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
-## Feature origins and September enhancements
+## Acknowledgments and licensing
 
-### Inherited functionality
-
-**Official Sonarr:** Release Profiles and their Must Contain / Must Not Contain title restrictions are inherited. Reject Unaired Releases, Air Date Grace Period, and season-pack air-date controls are present in official Sonarr **v5 development**; they are not original work of this fork. This attribution does not imply availability in every older Sonarr release.
-
-**Upstream Sonarr-Pro:** additional metadata sources, selectable episode orderings and ordering improvements, initial multi-season support, optional pack trimming, and initial fake-release torrent-content inspection come from upstream Sonarr-Pro. The feature descriptions above explain that inherited foundation.
-
-### Custom September development
-
-The following changes extend the inherited functionality:
-
-- Hardened fake-release submission routes, including dangerous executable and script release-title filtering.
-- Magnet metadata inspection before submission when supported, and HTTP redirect-to-magnet inspection with strict rejection when the required inspection cannot complete.
-- Improved explicit multi-season range parsing, episode mapping, and automatic import behavior.
-- Legacy grab membership reconciliation, so import decisions retain the intended episode membership.
-- Per-episode import progress reporting.
-- Regression coverage for multi-season size decisions.
-
-### Security scope and limitations
-
-These protections do not provide complete malware protection. A Release Profile restriction such as `.exe` checks the **release title**, not every downloaded file's contents. Torrent-submission inspection depends on available metadata and the applicable settings. Direct and fallback magnet compatibility exceptions remain; the strict redirect-inspection behavior does not mean every magnet is rejected when metadata is unavailable.
-
-Explicit interactive grabs may proceed despite Release Profile rejection decisions. Applicable torrent-submission security protections still operate on those routes. Use the profile restrictions and content inspection together, while recognizing their different scopes.
-
-### Dependency security
-
-The validated integration upgrades **SixLabors.ImageSharp from 3.1.12 to 4.1.3**. It also resolves the Windows NuGet `NU1510` warning by removing the redundant direct `System.Resources.Extensions` 10.0.10 reference supplied by the Windows framework. No application assembly was renamed. ImageSharp's official license validation passed for `Sonarr.Core`; no license file, key, or personal license identifier is published in this repository. Builders must satisfy the dependency's applicable licensing requirements.
-
-### Windows validation — October 13, 2026
-
-| Check | Result |
-|---|---|
-| Complete Windows backend Release build | Passed; zero warnings and zero errors |
-| Production frontend build | Passed |
-| Unique Release regression cases | 2,521 passed, zero failed, one skipped |
-| Debug / Release comparison | Identical sets of 2,522 test IDs and identical outcomes |
-| Available media-cover / ImageSharp tests | All 13 passed, including direct PNG resize and invalid-input cases |
-| NuGet vulnerability audit | 28 projects, including transitive dependencies; zero vulnerable packages reported |
-| September development history | All eight commits preserved |
-
-The skipped test is Linux-specific (`should_return_false_if_unopacking_on_linux`) and could not exercise its platform-specific behavior on Windows. These results **do not establish Linux/Docker runtime deployment, live end-to-end behavior, broader image-format compatibility, or npm vulnerability auditing**. JPEG/EXIF/color-profile behavior, additional formats, concurrency, and resource-stress scenarios were not fully covered. Frontend installation reported deprecation, engine-declaration, and peer-dependency warnings; installation and compilation still passed. The NuGet result is the audit finding on that date, not a guarantee against future advisories.
-
-### Development milestone
-
-The [September source baseline](https://github.com/gaboy498-byte/Sonarr-Pro/tree/sonarr-pro-matt-2026.09) retains these commits without squashing:
-
-| Commit | Enhancement |
-|---|---|
-| [9cd27f4b9](https://github.com/gaboy498-byte/Sonarr-Pro/commit/9cd27f4b9285d466dab933f618e4e9cab46268f3) | Explicit multi-season ranges |
-| [29c1872dc](https://github.com/gaboy498-byte/Sonarr-Pro/commit/29c1872dc98245cf8d63a7c9a11b06c48ab13389) | Safe multi-season automatic import |
-| [9dc787449](https://github.com/gaboy498-byte/Sonarr-Pro/commit/9dc7874490939d6cb7a21dfbb31053057c9171a5) | Legacy grab membership reconciliation |
-| [e37d5a2fe](https://github.com/gaboy498-byte/Sonarr-Pro/commit/e37d5a2fea6f64f94f0e5b99fffc20af10ab7587) | Per-episode import progress |
-| [0d48e2eef](https://github.com/gaboy498-byte/Sonarr-Pro/commit/0d48e2eefc085d0b36f9653472d1077227eb6205) | Multi-season size-decision tests |
-| [79ef6d2b1](https://github.com/gaboy498-byte/Sonarr-Pro/commit/79ef6d2b17fe9dc985527f3062b0fa05363535a7) | Fake-release route hardening |
-| [872d7cf97](https://github.com/gaboy498-byte/Sonarr-Pro/commit/872d7cf9716f8f0d9b543cd645093d71f6281bae) | Magnet metadata inspection |
-| [14eaaebf6](https://github.com/gaboy498-byte/Sonarr-Pro/commit/14eaaebf6267791c60c50a01b6d3109e18ccb53e) | HTTP redirect-to-magnet hardening |
-
-The October integration adds the ImageSharp security upgrade and Windows restore correction, followed by this documentation update. Current upstream synchronization and deployment are separate milestones; this source promotion performs neither.
-
-## Custom interface improvements
-
-### Release Profile Indexer Selection
-
-This fork's Indexer dropdown displays **`(Any)`** when no indexers are selected. The Release Profile then applies to all indexers, subject to its other settings, and automatically includes newly added indexers. Selecting individual indexers retains the existing multi-select behavior; clearing the final selection restores `(Any)`. Existing empty selections display the label without editing or resaving the profile.
-
-This is a frontend usability improvement extending inherited Sonarr / Sonarr-Pro functionality. `(Any)` is a display label, not a selectable indexer record or ID. Backend filtering rules, API payloads (`indexerIds: []` for an empty selection), and release-selection behavior are unchanged.
-
-### October 18, 2026 changelog
-
-- Added the Release Profile Indexer `(Any)` empty-selection display while preserving multi-select behavior.
-- Validation: seven focused frontend checks passed, frontend and stylesheet lint passed, and the production frontend build passed. These component/handler checks do not validate browser end-to-end behavior or Linux/Docker runtime deployment. The earlier validation results and known limitations above still apply.
-
-## What's removed
-
-Sonarr Pro doesn't contact Sonarr's servers for updates, crash reports, or announcements. Those endpoints describe upstream Sonarr builds, so an update offered there would replace this program with a different one — and the Sonarr team shouldn't receive crash reports or install metrics for a fork they don't maintain. Updates happen through Docker instead.
-
-## A word on Usenet
-
-NZBGet, SABnzbd and NZBVortex are all still in here, completely untouched. They'll work exactly as they do upstream.
-
-None of the new downloading features apply to them, though. Fake release filtering reads the file list inside a `.torrent` before the grab, and Usenet has no equivalent — so it's off there, and multi-season packs and pack trimming have only ever been tested against torrents. Consider Usenet support inherited rather than maintained.
-
-But nobody uses that shit anyways.
-
----
-
-## Getting started
-
-The following Docker instructions and image tags are retained from **upstream Sonarr-Pro**. They describe upstream's container distribution, not a published image of this custom source baseline. No custom binaries or container image accompany the Windows-validated tag.
-
-You need [Docker](https://docs.docker.com/get-docker/). That's the only prerequisite.
-
-### Quick start
-
-```bash
-docker run -d --name sonarr-pro -p 8989:8989 -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC -v ./config:/config -v /path/to/media:/media --restart unless-stopped ghcr.io/kakarottocake/sonarr-pro:latest
-```
-
-Then open **http://localhost:8989**.
-
-### Or with Compose
-
-Grab [`docker-compose.yml`](docker-compose.yml), edit the media path, and run:
-
-```bash
-docker compose up -d
-```
-
-### Updating
-
-```bash
-docker compose pull && docker compose up -d
-```
-
-Or without Compose:
-
-```bash
-docker pull ghcr.io/kakarottocake/sonarr-pro:latest && docker restart sonarr-pro
-```
-
-Your database and settings live in the `/config` volume and survive the upgrade. There's no in-app updater to wait on and nothing to reinstall.
-
-### Settings that matter
-
-| Variable | Default | What it does |
-|---|---|---|
-| `PUID` / `PGID` | `1000` | The user files are written as. Run `id` on the host and use those numbers, or downloads arrive owned by root and you won't be able to edit them. |
-| `TZ` | `Etc/UTC` | Timezone, so scheduled tasks and log timestamps match your clock. |
-
-Mount your download client's completed folder and your library under a **single** `/media` parent. If they're separate mounts, every import becomes a full file copy instead of an instant move.
-
-### Tags
-
-| Tag | What you get |
-|---|---|
-| `latest` | The newest release. Use this one. |
-| `edge` | Every commit to `main`. Untested; expect breakage. |
-| `v1.2.3` | A specific release, pinned. |
-
-Built for `linux/amd64` and `linux/arm64`.
-
-### Coming from Sonarr
-
-The config directory layout is unchanged, so pointing Sonarr Pro's `/config` at a copy of an existing Sonarr config works. **Copy it, don't move it** — the database is migrated on first start and isn't readable by upstream Sonarr afterwards. Keep the original until you're satisfied.
-
----
-
-## First-run setup
-
-**Add a TMDB API key** if you want TMDB metadata or episode groups — Settings → Metadata Source. It's free from [themoviedb.org](https://www.themoviedb.org/settings/api). Nothing else needs a key, and the other three sources work without it.
-
-**Build the IMDb index** if you want IMDb orderings — System → Tasks → *Refresh Imdb Dataset*. It downloads about 52 MB once, then keeps itself current monthly. Until it runs, IMDb simply doesn't appear in the ordering dropdown.
-
-One thing worth knowing before you add a long series: **the episode ordering is fixed when the series is added.** Season and episode numbers go into file and folder names, so changing it afterwards would rename your library on disk. To change it, remove the series and add it again.
-
----
-
-## Contributing
-
-Contributions are welcome, **including AI-assisted ones**. Upstream's tooling automatically flags and converts PRs from AI agents to drafts; that's been removed here. There's no CLA and no template to fill in.
-
-What's asked instead:
-
-- **Explain the reasoning, not just the change.** A PR that says what broke and why this is the right fix is worth several that only say what changed.
-- **Say what you actually verified.** "Tests pass, ran it against a real library" and "compiles, untested" are both fine answers. Claiming the first while meaning the second is not.
-- Run `dotnet build src/Sonarr.sln` and `yarn lint` first. CI runs both anyway.
-
-Suggestions and bug reports are equally welcome — [open an issue](https://github.com/KakarottoCake/Sonarr-Pro/issues).
-
-### Building locally
-
-```bash
-dotnet build src/Sonarr.sln -c Debug
-```
-
-Build the **solution**, not individual project files. `Directory.Build.props` loads `stylecop.json` through `$(SolutionDir)`, which is only defined for a solution build — building a bare `.csproj` silently drops the StyleCop config and then fails on every `using` directive in the repo.
-
-```bash
-yarn install && yarn build --env production
-```
-
-`--env production` is not optional. Without it webpack emits eval-source-map output and the UI loads as a blank page.
-
----
-
-## License
-
-[GPL-3.0](LICENSE.md), the same as upstream Sonarr.
+Credit for official Sonarr belongs to the Sonarr contributors. Credit for upstream Sonarr-Pro's metadata, ordering, pack and initial filtering features belongs to KakarottoCake and upstream contributors. This repository preserves their history, [copyright notices](COPYRIGHT.md) and [GPL license](LICENSE.md). No ownership of inherited features is claimed.
 
 Sonarr Pro is a derivative work of [Sonarr](https://github.com/Sonarr/Sonarr), copyright the Sonarr contributors, whose copyright notices are retained. Credit for the several hundred thousand lines this is built on belongs to them; the changes listed above are the only part that's new here.
+
+The application uses the GPL terms in [LICENSE.md](LICENSE.md) and [COPYRIGHT.md](COPYRIGHT.md). Third-party components are not all GPL: MonoTorrent retains its MIT notice, and ImageSharp uses Six Labors' license terms. The included assembly-scoped build grant is not a blanket license for other assemblies or uses. Redistributors must review the applicable component terms and corresponding-source obligations; see [Docker publishing readiness](docs/DOCKER-PUBLISHING.md).
