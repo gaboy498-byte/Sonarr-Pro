@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Threading.Tasks;
 using MonoTorrent;
@@ -185,13 +186,13 @@ namespace NzbDrone.Core.Download
                 {
                     var locationHeader = response.Headers.GetSingleValue("Location");
 
-                    _logger.Trace("Torrent request is being redirected to: {0}", locationHeader);
+                    _logger.Trace("Torrent request received a redirect; the Location header is omitted from diagnostics.");
 
                     if (locationHeader != null)
                     {
                         if (locationHeader.StartsWith("magnet:"))
                         {
-                            _logger.Trace("Torrent URL for '{0}' redirected to a magnet; continuing through magnet metadata inspection", remoteEpisode.Release.Title);
+                            _logger.Trace("Torrent URL redirected to a magnet; continuing through magnet metadata inspection");
                             return await DownloadFromMagnetUrl(remoteEpisode, indexer, locationHeader, MagnetDownloadContext.HttpRedirectToMagnet);
                         }
 
@@ -270,14 +271,20 @@ namespace NzbDrone.Core.Download
         {
             string hash = null;
             string actualHash = null;
+            MagnetLink originalMagnet;
 
             try
             {
-                hash = MagnetLink.Parse(magnetUrl).InfoHashes.V1OrV2.ToHex();
+                originalMagnet = MagnetLink.Parse(magnetUrl);
+                hash = originalMagnet.InfoHashes.V1OrV2.ToHex();
             }
-            catch (FormatException ex)
+            catch (FormatException)
             {
-                throw new ReleaseDownloadException(remoteEpisode.Release, "Failed to parse magnetlink for episode '{0}': '{1}'", ex, remoteEpisode.Release.Title, magnetUrl);
+                throw new ReleaseDownloadException(remoteEpisode.Release, "Failed to parse magnet link; the magnet was not submitted.");
+            }
+            catch (ArgumentException)
+            {
+                throw new ReleaseDownloadException(remoteEpisode.Release, "Failed to parse magnet link; the magnet was not submitted.");
             }
 
             if (hash != null)
@@ -286,12 +293,13 @@ namespace NzbDrone.Core.Download
 
                 if (_configService.EnableFakeReleaseProtection)
                 {
-                    var originalMagnet = MagnetLink.Parse(magnetUrl);
                     var resolutionMagnet = MagnetMetadataResolver.CreateResolutionMagnet(originalMagnet);
 
                     if (resolutionMagnet.AnnounceUrls.Count > 0)
                     {
+                        var resolutionStopwatch = Stopwatch.StartNew();
                         var resolution = await _magnetMetadataResolver.ResolveAsync(resolutionMagnet, System.Threading.CancellationToken.None);
+                        resolutionStopwatch.Stop();
 
                         if (resolution?.IsResolved == true)
                         {
@@ -301,9 +309,7 @@ namespace NzbDrone.Core.Download
                         {
                             if (context == MagnetDownloadContext.HttpRedirectToMagnet)
                             {
-                                throw new ReleaseDownloadException(
-                                    remoteEpisode.Release,
-                                    "Magnet metadata could not be inspected after an HTTP redirect; the magnet was not submitted.");
+                                throw CreateRedirectInspectionFailure(remoteEpisode, indexer, resolution?.Reason, resolutionMagnet.AnnounceUrls.Count, resolutionStopwatch.ElapsedMilliseconds);
                             }
 
                             _logger.Debug("Magnet metadata for '{0}' was uninspectable ({1}); submitting original magnet", remoteEpisode.Release.Title, resolution?.Reason);
@@ -313,9 +319,7 @@ namespace NzbDrone.Core.Download
                     {
                         if (context == MagnetDownloadContext.HttpRedirectToMagnet)
                         {
-                            throw new ReleaseDownloadException(
-                                remoteEpisode.Release,
-                                "Magnet metadata could not be inspected after an HTTP redirect; the magnet was not submitted.");
+                            throw CreateRedirectInspectionFailure(remoteEpisode, indexer, MagnetMetadataUninspectableReason.NoAllowedTrackers, 0, 0);
                         }
 
                         _logger.Debug("Magnet metadata for '{0}' had no allowed HTTP/HTTPS trackers; submitting original magnet", remoteEpisode.Release.Title);
@@ -334,6 +338,35 @@ namespace NzbDrone.Core.Download
             }
 
             return actualHash;
+        }
+
+        private ReleaseDownloadException CreateRedirectInspectionFailure(RemoteEpisode remoteEpisode,
+            IIndexer indexer,
+            MagnetMetadataUninspectableReason? reason,
+            int permittedTrackerCount,
+            long elapsedMilliseconds)
+        {
+            var category = reason?.ToString() ?? "Unspecified";
+            var indexerId = indexer?.Definition?.Id ?? remoteEpisode.Release.IndexerId;
+            var elapsedMs = (int)Math.Clamp(elapsedMilliseconds, 0L, int.MaxValue);
+            const string context = nameof(MagnetDownloadContext.HttpRedirectToMagnet);
+
+            _logger.Debug(
+                "Magnet metadata inspection rejected: Reason={Reason}; Context={Context}; IndexerId={IndexerId}; PermittedTrackerCount={PermittedTrackerCount}; ElapsedMs={ElapsedMs}.",
+                category,
+                context,
+                indexerId,
+                permittedTrackerCount,
+                elapsedMs);
+
+            return new ReleaseDownloadException(
+                remoteEpisode.Release,
+                "Magnet metadata could not be inspected after an HTTP redirect; the magnet was not submitted. Reason={0}; Context={1}; IndexerId={2}; PermittedTrackerCount={3}; ElapsedMs={4}.",
+                category,
+                context,
+                indexerId,
+                permittedTrackerCount,
+                elapsedMs);
         }
 
         private void EnsureReleaseIsNotFake(RemoteEpisode remoteEpisode, byte[] torrentFile)

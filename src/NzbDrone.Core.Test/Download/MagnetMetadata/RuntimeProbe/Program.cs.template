@@ -1,0 +1,129 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using MonoTorrent;
+using NLog;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download.MagnetMetadata;
+
+// Compiled only by run.py inside a disposable, network-none container.
+public class ConfigurationProxy : DispatchProxy
+{
+    protected override object? Invoke(MethodInfo? method, object?[]? args) =>
+        method!.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null;
+}
+
+public static class Program
+{
+    private static readonly List<object> Results = new();
+
+    public static async Task Main()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var dns = new UdpClient(new IPEndPoint(IPAddress.Loopback, 53));
+        var dnsRequests = 0;
+        var dnsServer = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var request = await dns.ReceiveAsync(cancellation.Token);
+                    if (request.Buffer.Length < 12) continue;
+                    // Preserve the question and return NXDOMAIN. This resolver is container-local.
+                    var response = request.Buffer;
+                    response[2] = 0x81;
+                    response[3] = 0x83;
+                    Array.Clear(response, 6, 6);
+                    Interlocked.Increment(ref dnsRequests);
+                    await dns.SendAsync(response, request.RemoteEndPoint, cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        try
+        {
+            await Resolve("mock DNS NXDOMAIN", "http://tracker.synthetic.invalid/announce");
+            Require(dnsRequests > 0, "Synthetic DNS server was not used");
+            await Tracker("tracker unavailable HTTP 503", false);
+            await Tracker("HTTP tracker zero peers", true);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await dnsServer;
+        }
+
+        File.WriteAllText("/probe/results.json", JsonSerializer.Serialize(
+            new { passed = true, dnsRequests, externalNetwork = false, cases = Results },
+            new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine($"Runtime resolver cases passed: {Results.Count}; synthetic DNS queries: {dnsRequests}");
+    }
+
+    private static async Task Tracker(string name, bool emptyPeers)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var requests = 0;
+        var server = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    using var client = await listener.AcceptTcpClientAsync(cancellation.Token);
+                    using var stream = client.GetStream();
+                    var buffer = new byte[8192];
+                    var bytesRead = await stream.ReadAsync(buffer, cancellation.Token);
+                    Require(bytesRead > 0, "Synthetic tracker received an empty request");
+                    Interlocked.Increment(ref requests);
+                    var body = emptyPeers ? "d8:intervali60e5:peers0:e" : "Unavailable";
+                    var status = emptyPeers ? "200 OK" : "503 Service Unavailable";
+                    var response = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n{body}");
+                    await stream.WriteAsync(response, cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+        try
+        {
+            await Resolve(name, $"http://127.0.0.1:{port}/announce");
+            Require(requests > 0, "Synthetic tracker was not contacted");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            listener.Stop();
+            await server;
+        }
+    }
+
+    private static async Task Resolve(string name, string tracker)
+    {
+        var cache = Path.Combine(Path.GetTempPath(), "sonarr-magnet-metadata");
+        var before = Directory.Exists(cache) ? Directory.GetDirectories(cache) : Array.Empty<string>();
+        var config = DispatchProxy.Create<IConfigService, ConfigurationProxy>();
+        var resolver = new MagnetMetadataResolver(config, LogManager.GetLogger("SyntheticRuntime"));
+        // Synthetic hash only; network isolation prevents external peers or download clients.
+        var magnet = MagnetLink.Parse("magnet:?xt=urn:btih:1111111111111111111111111111111111111111&tr=" + Uri.EscapeDataString(tracker));
+        var watch = Stopwatch.StartNew();
+        var result = await resolver.ResolveAsync(magnet, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(60));
+        watch.Stop();
+        var after = Directory.Exists(cache) ? Directory.GetDirectories(cache) : Array.Empty<string>();
+        Require(!result.IsResolved && result.Reason == MagnetMetadataUninspectableReason.Timeout, "Unexpected resolver outcome");
+        Require(watch.Elapsed.TotalSeconds >= 25 && watch.Elapsed.TotalSeconds < 60, "Resolver timeout bound changed");
+        Require(!after.Except(before).Any(), "Resolver temporary cache remained after failure");
+        Results.Add(new { name, reason = result.Reason.ToString(), seconds = watch.Elapsed.TotalSeconds, cacheCleaned = true });
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+}
