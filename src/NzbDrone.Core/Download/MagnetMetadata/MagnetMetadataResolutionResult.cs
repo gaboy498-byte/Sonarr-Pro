@@ -27,6 +27,14 @@ namespace NzbDrone.Core.Download.MagnetMetadata
 
         public MagnetMetadataUninspectableReason? Reason { get; }
 
+        public MagnetMetadataDiagnostics Diagnostics { get; private set; }
+
+        internal MagnetMetadataResolutionResult WithDiagnostics(MagnetMetadataDiagnostics diagnostics)
+        {
+            Diagnostics = diagnostics;
+            return this;
+        }
+
         public static MagnetMetadataResolutionResult Resolved(byte[] metadata)
         {
             return new MagnetMetadataResolutionResult(metadata, null);

@@ -309,7 +309,7 @@ namespace NzbDrone.Core.Download
                         {
                             if (context == MagnetDownloadContext.HttpRedirectToMagnet)
                             {
-                                throw CreateRedirectInspectionFailure(remoteEpisode, indexer, resolution?.Reason, resolutionMagnet.AnnounceUrls.Count, resolutionStopwatch.ElapsedMilliseconds);
+                                throw CreateRedirectInspectionFailure(remoteEpisode, indexer, resolution?.Reason, resolutionMagnet.AnnounceUrls.Count, resolutionStopwatch.ElapsedMilliseconds, resolution?.Diagnostics);
                             }
 
                             _logger.Debug("Magnet metadata for '{0}' was uninspectable ({1}); submitting original magnet", remoteEpisode.Release.Title, resolution?.Reason);
@@ -344,29 +344,33 @@ namespace NzbDrone.Core.Download
             IIndexer indexer,
             MagnetMetadataUninspectableReason? reason,
             int permittedTrackerCount,
-            long elapsedMilliseconds)
+            long elapsedMilliseconds,
+            MagnetMetadataDiagnostics diagnostics = null)
         {
             var category = reason?.ToString() ?? "Unspecified";
             var indexerId = indexer?.Definition?.Id ?? remoteEpisode.Release.IndexerId;
             var elapsedMs = (int)Math.Clamp(elapsedMilliseconds, 0L, int.MaxValue);
             const string context = nameof(MagnetDownloadContext.HttpRedirectToMagnet);
+            var stages = diagnostics?.ToString() ?? "StageDiagnostics=Unavailable";
 
             _logger.Debug(
-                "Magnet metadata inspection rejected: Reason={Reason}; Context={Context}; IndexerId={IndexerId}; PermittedTrackerCount={PermittedTrackerCount}; ElapsedMs={ElapsedMs}.",
+                "Magnet metadata inspection rejected: Reason={Reason}; Context={Context}; IndexerId={IndexerId}; PermittedTrackerCount={PermittedTrackerCount}; ElapsedMs={ElapsedMs}; Stages={StageDiagnostics}.",
                 category,
                 context,
                 indexerId,
                 permittedTrackerCount,
-                elapsedMs);
+                elapsedMs,
+                stages);
 
             return new ReleaseDownloadException(
                 remoteEpisode.Release,
-                "Magnet metadata could not be inspected after an HTTP redirect; the magnet was not submitted. Reason={0}; Context={1}; IndexerId={2}; PermittedTrackerCount={3}; ElapsedMs={4}.",
+                "Magnet metadata could not be inspected after an HTTP redirect; the magnet was not submitted. Reason={0}; Context={1}; IndexerId={2}; PermittedTrackerCount={3}; ElapsedMs={4}; {5}.",
                 category,
                 context,
                 indexerId,
                 permittedTrackerCount,
-                elapsedMs);
+                elapsedMs,
+                stages);
         }
 
         private void EnsureReleaseIsNotFake(RemoteEpisode remoteEpisode, byte[] torrentFile)

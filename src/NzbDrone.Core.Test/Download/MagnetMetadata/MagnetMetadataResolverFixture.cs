@@ -25,6 +25,13 @@ namespace NzbDrone.Core.Test.Download.MagnetMetadata
         }
 
         [Test]
+        public void resolution_results_should_expose_stage_diagnostics()
+        {
+            typeof(MagnetMetadataResolutionResult).GetProperty("Diagnostics").Should().NotBeNull(
+                "resolver outcomes currently expose no measured lifecycle stages");
+        }
+
+        [Test]
         public async Task should_not_create_engine_when_proxy_is_enabled()
         {
             _config.SetupGet(v => v.ProxyEnabled).Returns(true);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -20,114 +21,265 @@ namespace NzbDrone.Core.Download.MagnetMetadata
         private static readonly SemaphoreSlim ResolutionSlots = new SemaphoreSlim(MaximumConcurrentResolutions, MaximumConcurrentResolutions);
         private readonly IConfigService _configService;
         private readonly Logger _logger;
+        private readonly SemaphoreSlim _resolutionSlots;
+        private readonly Func<EngineSettings, MagnetMetadataDiagnostics, IMagnetMetadataEngine> _createEngine;
 
         public MagnetMetadataResolver(IConfigService configService, Logger logger)
+            : this(configService, logger, (settings, diagnostics) => new MetadataEngine(settings, diagnostics), ResolutionSlots)
+        {
+        }
+
+        internal MagnetMetadataResolver(IConfigService configService,
+            Logger logger,
+            Func<EngineSettings, MagnetMetadataDiagnostics, IMagnetMetadataEngine> createEngine,
+            SemaphoreSlim resolutionSlots)
         {
             _configService = configService;
             _logger = logger;
+            _createEngine = createEngine;
+            _resolutionSlots = resolutionSlots;
         }
 
         public async Task<MagnetMetadataResolutionResult> ResolveAsync(MagnetLink resolutionMagnet, CancellationToken cancellationToken)
         {
-            if (_configService.ProxyEnabled)
-            {
-                return MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.ProxyConfigured);
-            }
-
-            var sanitizedMagnet = resolutionMagnet == null ? null : CreateResolutionMagnet(resolutionMagnet);
-            if (sanitizedMagnet == null || sanitizedMagnet.AnnounceUrls.Count == 0)
-            {
-                return MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.NoAllowedTrackers);
-            }
-
-            await ResolutionSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
-            using var timeout = new CancellationTokenSource(ResolutionTimeout);
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-            var cacheDirectory = Path.Combine(Path.GetTempPath(), "sonarr-magnet-metadata", Guid.NewGuid().ToString("N"));
-
-            ClientEngine engine = null;
+            var totalStarted = Stopwatch.GetTimestamp();
+            var diagnostics = new MagnetMetadataDiagnostics();
             MagnetMetadataResolutionResult result = null;
-            var cleanupFailed = false;
+            var status = "Exception";
+            var stage = "Preflight";
 
             try
             {
-                Directory.CreateDirectory(cacheDirectory);
-                var engineSettings = CreateEngineSettings(cacheDirectory);
-                var torrentSettings = CreateTorrentSettings();
-
-                engine = new ClientEngine(engineSettings);
-                await engine.StartAllAsync().ConfigureAwait(false);
-                var metadata = await engine.DownloadMetadataAsync(sanitizedMagnet, torrentSettings, linked.Token).ConfigureAwait(false);
-
-                if (metadata.IsEmpty)
+                if (_configService.ProxyEnabled)
                 {
-                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.NoPeers);
+                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.ProxyConfigured);
+                    return result.WithDiagnostics(diagnostics);
                 }
-                else
-                {
-                    result = MagnetMetadataResolutionResult.Resolved(metadata.ToArray());
-                }
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.Timeout);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Magnet metadata resolution failed");
-                result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
-            }
-            finally
-            {
-                if (engine != null)
-                {
-                    try
-                    {
-                        await engine.StopAllAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        cleanupFailed = true;
-                        _logger.Warn(ex, "Magnet metadata resolver engine cleanup failed");
-                    }
 
-                    try
-                    {
-                        engine.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        cleanupFailed = true;
-                        _logger.Warn(ex, "Magnet metadata resolver engine disposal failed");
-                    }
+                var sanitizedMagnet = resolutionMagnet == null ? null : CreateResolutionMagnet(resolutionMagnet);
+                diagnostics.PermittedTrackerCount = sanitizedMagnet?.AnnounceUrls.Count ?? 0;
+                if (sanitizedMagnet == null || sanitizedMagnet.AnnounceUrls.Count == 0)
+                {
+                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.NoAllowedTrackers);
+                    return result.WithDiagnostics(diagnostics);
                 }
+
+                stage = "SlotWait";
+                var slotStarted = Stopwatch.GetTimestamp();
+                try
+                {
+                    await _resolutionSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    diagnostics.SlotWaitMs = MagnetMetadataDiagnostics.ElapsedMs(slotStarted);
+                }
+
+                // Keep the existing timeout after acquisition: it does not bound slot wait or cleanup.
+                using var timeout = new CancellationTokenSource(ResolutionTimeout);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+                var cacheDirectory = Path.Combine(Path.GetTempPath(), "sonarr-magnet-metadata", Guid.NewGuid().ToString("N"));
+                IMagnetMetadataEngine engine = null;
+                var cleanupFailed = false;
 
                 try
                 {
-                    if (Directory.Exists(cacheDirectory))
+                    stage = "EngineInit";
+                    var initStarted = Stopwatch.GetTimestamp();
+                    TorrentSettings torrentSettings;
+                    try
                     {
-                        Directory.Delete(cacheDirectory, true);
+                        Directory.CreateDirectory(cacheDirectory);
+                        var engineSettings = CreateEngineSettings(cacheDirectory);
+                        torrentSettings = CreateTorrentSettings();
+                        engine = _createEngine(engineSettings, diagnostics);
+                        await engine.StartAllAsync().ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        diagnostics.EngineInitMs = MagnetMetadataDiagnostics.ElapsedMs(initStarted);
+                    }
+
+                    stage = "Discovery";
+                    var discoveryStarted = Stopwatch.GetTimestamp();
+                    ReadOnlyMemory<byte> metadata;
+                    try
+                    {
+                        metadata = await engine.DownloadMetadataAsync(sanitizedMagnet, torrentSettings, linked.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        diagnostics.DiscoveryMs = MagnetMetadataDiagnostics.ElapsedMs(discoveryStarted);
+                    }
+
+                    diagnostics.MetadataDownloaded = !metadata.IsEmpty;
+                    result = metadata.IsEmpty
+                        ? MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.NoPeers)
+                        : MagnetMetadataResolutionResult.Resolved(metadata.ToArray());
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    diagnostics.ObserveCancellation(stage);
+                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.Timeout);
+                }
+                catch (OperationCanceledException)
+                {
+                    diagnostics.ObserveCancellation(stage);
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // Exceptions can contain tracker URLs, cache paths or credentials.
+                    _logger.Debug("Magnet metadata resolution failed; Category=EngineFailure; Stage={Stage}", stage);
+                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
+                }
+                finally
+                {
+                    if (engine != null)
+                    {
+                        var stopStarted = Stopwatch.GetTimestamp();
+                        try
+                        {
+                            await engine.StopAllAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (ex is OperationCanceledException)
+                            {
+                                diagnostics.ObserveCancellation("Shutdown");
+                            }
+
+                            cleanupFailed = true;
+                            _logger.Warn("Magnet metadata resolver engine cleanup failed; Stage=Shutdown");
+                        }
+                        finally
+                        {
+                            diagnostics.StopMs = MagnetMetadataDiagnostics.ElapsedMs(stopStarted);
+                        }
+
+                        var disposeStarted = Stopwatch.GetTimestamp();
+                        try
+                        {
+                            engine.Dispose();
+                        }
+                        catch (Exception ex)
+                        {
+                            if (ex is OperationCanceledException)
+                            {
+                                diagnostics.ObserveCancellation("Disposal");
+                            }
+
+                            cleanupFailed = true;
+                            _logger.Warn("Magnet metadata resolver engine disposal failed; Stage=Disposal");
+                        }
+                        finally
+                        {
+                            diagnostics.DisposeMs = MagnetMetadataDiagnostics.ElapsedMs(disposeStarted);
+                        }
+                    }
+
+                    var cleanupStarted = Stopwatch.GetTimestamp();
+                    try
+                    {
+                        if (Directory.Exists(cacheDirectory))
+                        {
+                            Directory.Delete(cacheDirectory, true);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (ex is OperationCanceledException)
+                        {
+                            diagnostics.ObserveCancellation("CacheCleanup");
+                        }
+
+                        cleanupFailed = true;
+                        _logger.Warn("Magnet metadata resolver temporary directory cleanup failed; Stage=CacheCleanup");
+                    }
+                    finally
+                    {
+                        diagnostics.CleanupMs = MagnetMetadataDiagnostics.ElapsedMs(cleanupStarted);
+                        diagnostics.Cleanup = cleanupFailed ? "Failed" : "Succeeded";
+                        diagnostics.TimeoutCancellationRequested = timeout.IsCancellationRequested;
+                        _resolutionSlots.Release();
                     }
                 }
-                catch (Exception ex)
+
+                if (cleanupFailed && result?.IsResolved == true)
                 {
-                    cleanupFailed = true;
-                    _logger.Warn(ex, "Magnet metadata resolver temporary directory cleanup failed");
+                    result = MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
                 }
 
-                ResolutionSlots.Release();
+                result ??= MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
+                return result.WithDiagnostics(diagnostics);
             }
-
-            if (cleanupFailed && result?.IsResolved == true)
+            catch (OperationCanceledException)
             {
-                return MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
+                status = "Canceled";
+                diagnostics.ObserveCancellation(stage);
+
+                throw;
+            }
+            finally
+            {
+                diagnostics.TotalMs = MagnetMetadataDiagnostics.ElapsedMs(totalStarted);
+                diagnostics.CallerCancellationRequested = cancellationToken.IsCancellationRequested;
+                if (result != null)
+                {
+                    status = result.IsResolved ? "Resolved" : "Uninspectable";
+                }
+
+                if (result?.IsResolved == true)
+                {
+                    if (_logger.IsTraceEnabled)
+                    {
+                        _logger.Trace("Magnet metadata resolution completed; Status={Status}; Stages={Stages}", status, diagnostics.ToString());
+                    }
+                }
+                else
+                {
+                    _logger.Debug("Magnet metadata resolution completed; Status={Status}; Reason={Reason}; Stages={Stages}", status, result?.Reason?.ToString() ?? "Unspecified", diagnostics.ToString());
+                }
+            }
+        }
+
+        private sealed class MetadataEngine : IMagnetMetadataEngine
+        {
+            private readonly ClientEngine _engine;
+            private readonly MagnetMetadataDiagnostics _diagnostics;
+
+            public MetadataEngine(EngineSettings settings, MagnetMetadataDiagnostics diagnostics)
+            {
+                _engine = new ClientEngine(settings);
+                _diagnostics = diagnostics;
+                _engine.StatsUpdate += ObserveConnections;
             }
 
-            return result ?? MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.EngineFailure);
+            public Task StartAllAsync() => _engine.StartAllAsync();
+
+            public Task<ReadOnlyMemory<byte>> DownloadMetadataAsync(MagnetLink magnet, TorrentSettings settings, CancellationToken token)
+                => _engine.DownloadMetadataAsync(magnet, settings, token);
+
+            public Task StopAllAsync(TimeSpan timeout) => _engine.StopAllAsync(timeout);
+
+            public void Dispose()
+            {
+                _engine.StatsUpdate -= ObserveConnections;
+                _engine.Dispose();
+            }
+
+            private void ObserveConnections(object sender, StatsUpdateEventArgs args)
+            {
+                try
+                {
+                    _diagnostics.ObserveConnections(_engine.ConnectionManager.OpenConnections, _engine.ConnectionManager.HalfOpenConnections);
+                }
+                catch (Exception)
+                {
+                    // Observation must never interfere with the engine or expose its exception text.
+                    _diagnostics.ConnectionObservationFailed();
+                }
+            }
         }
 
         public static MagnetLink CreateResolutionMagnet(MagnetLink originalMagnet)

@@ -119,7 +119,15 @@ public static class Program
         Require(!result.IsResolved && result.Reason == MagnetMetadataUninspectableReason.Timeout, "Unexpected resolver outcome");
         Require(watch.Elapsed.TotalSeconds >= 25 && watch.Elapsed.TotalSeconds < 60, "Resolver timeout bound changed");
         Require(!after.Except(before).Any(), "Resolver temporary cache remained after failure");
-        Results.Add(new { name, reason = result.Reason.ToString(), seconds = watch.Elapsed.TotalSeconds, cacheCleaned = true });
+        var diagnostics = result.Diagnostics;
+        Require(diagnostics != null, "Measured diagnostics missing");
+        Require(diagnostics.SlotWaitMs >= 0 && diagnostics.EngineInitMs >= 0, "Initialization timing missing");
+        Require(diagnostics.DiscoveryMs >= 25000 && diagnostics.DiscoveryMs < 60000, "Discovery timing missing or unexpected");
+        Require(diagnostics.StopMs >= 0 && diagnostics.DisposeMs >= 0 && diagnostics.CleanupMs >= 0, "Cleanup timing missing");
+        Require(diagnostics.CancellationObserved && diagnostics.TimeoutCancellationRequested && !diagnostics.CallerCancellationRequested, "Cancellation observation changed");
+        Require(diagnostics.CancellationStage == "Discovery" && diagnostics.Cleanup == "Succeeded", "Lifecycle observation changed");
+        Require(diagnostics.ConnectionSamples > 0 || diagnostics.PeakOpenConnectionsObserved == null, "Unobserved connections reported as measured");
+        Results.Add(new { name, reason = result.Reason.ToString(), seconds = watch.Elapsed.TotalSeconds, cacheCleaned = true, diagnostics });
     }
 
     private static void Require(bool condition, string message)
