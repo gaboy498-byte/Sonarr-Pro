@@ -97,11 +97,42 @@ namespace NzbDrone.Core.Test.Download.MagnetMetadata
         }
 
         [Test]
+        public void strict_rejection_propagates_measured_stages_without_inventing_unavailable_metrics()
+        {
+            GivenRedirect(Magnet(HttpTracker));
+            var stages = new MagnetMetadataDiagnostics
+            {
+                SlotWaitMs = 17,
+                EngineInitMs = 4,
+                DiscoveryMs = 30001,
+                StopMs = 11000,
+                DisposeMs = 2,
+                CleanupMs = 1,
+                TotalMs = 41025,
+                CancellationObserved = true,
+                TimeoutCancellationRequested = true,
+                CancellationStage = "Discovery",
+                Cleanup = "Succeeded"
+            };
+            _resolver.Setup(x => x.ResolveAsync(It.IsAny<MagnetLink>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(MagnetMetadataResolutionResult.Uninspectable(MagnetMetadataUninspectableReason.Timeout).WithDiagnostics(stages));
+
+            var error = Reject();
+
+            error.Message.Should().Contain("SlotWaitMs=17").And.Contain("DiscoveryMs=30001").And.Contain("StopMs=11000").And.Contain("TotalMs=41025");
+            error.Message.Should().Contain("PeerDiscoveryStats=Unavailable").And.Contain("PeakOpenConnectionsObserved=Unavailable");
+            _target.Events.Single(x => x.Message.StartsWith("Magnet metadata inspection rejected", StringComparison.Ordinal))
+                .Properties["StageDiagnostics"].Should().Be(stages.ToString());
+            VerifySanitized(error);
+            VerifyNoSubmission();
+        }
+
+        [Test]
         public void unavailable_reason_is_unspecified_not_an_invented_failure()
         {
             GivenRedirect(Magnet(HttpTracker));
             _resolver.Setup(x => x.ResolveAsync(It.IsAny<MagnetLink>(), It.IsAny<CancellationToken>())).ReturnsAsync((MagnetMetadataResolutionResult)null);
-            Reject().Message.Should().Contain("Reason=Unspecified").And.NotContain("Reason=EngineFailure").And.NotContain("Reason=Timeout");
+            Reject().Message.Should().Contain("Reason=Unspecified").And.Contain("StageDiagnostics=Unavailable").And.NotContain("Reason=EngineFailure").And.NotContain("Reason=Timeout");
             VerifyNoSubmission();
         }
 
